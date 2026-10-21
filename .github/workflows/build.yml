@@ -1,0 +1,272 @@
+name: Night Blue Touch Test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 20
+
+    steps:
+      - name: Check Xcode
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install project generator
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Create application and widget
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p App Widget
+
+          cat > project.yml <<'YAML'
+          name: NightBlueTouchTest
+          options:
+            deploymentTarget:
+              iOS: "26.0"
+          settings:
+            base:
+              SWIFT_VERSION: "5.0"
+              TARGETED_DEVICE_FAMILY: "1,2"
+              MARKETING_VERSION: "1.0"
+              CURRENT_PROJECT_VERSION: "1"
+              CODE_SIGNING_ALLOWED: NO
+          targets:
+            NightBlueTouchTest:
+              type: application
+              platform: iOS
+              sources:
+                - path: App
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.meski279.nightbluetouchtest
+              info:
+                path: App/Info.plist
+                properties:
+                  CFBundleDisplayName: Night Blue Test
+                  UILaunchScreen: {}
+                  UISupportedInterfaceOrientations:
+                    - UIInterfaceOrientationPortrait
+                    - UIInterfaceOrientationLandscapeLeft
+                    - UIInterfaceOrientationLandscapeRight
+              dependencies:
+                - target: NightBlueTouchWidget
+                  embed: true
+                  codeSign: false
+
+            NightBlueTouchWidget:
+              type: app-extension
+              platform: iOS
+              sources:
+                - path: Widget
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.meski279.nightbluetouchtest.widget
+                  APPLICATION_EXTENSION_API_ONLY: YES
+                  SKIP_INSTALL: YES
+              info:
+                path: Widget/Info.plist
+                properties:
+                  CFBundleDisplayName: Night Blue
+                  NSExtension:
+                    NSExtensionPointIdentifier: com.apple.widgetkit-extension
+          schemes:
+            NightBlueTouchTest:
+              build:
+                targets:
+                  NightBlueTouchTest: all
+          YAML
+
+          cat > App/NightBlueApp.swift <<'SWIFT'
+          import SwiftUI
+
+          @main
+          struct NightBlueApp: App {
+              var body: some Scene {
+                  WindowGroup {
+                      VStack(spacing: 24) {
+                          Image(systemName: "hand.tap.fill")
+                              .font(.system(size: 58))
+                              .foregroundStyle(.cyan)
+
+                          Text("NIGHT BLUE")
+                              .font(.largeTitle.bold())
+
+                          Text("Dokunmatik Denemesi")
+                              .font(.title2)
+
+                          Text("""
+                          Bu uygulama bir deneme aracidir.
+
+                          iPhone arac takimlarina veya CarPlay \
+                          arac takimlarina Night Blue ekleyin.
+
+                          Arac takimindaki DOKUN dugmesine \
+                          basinca sayac artmalidir.
+                          """)
+                          .multilineTextAlignment(.center)
+                          .foregroundStyle(.secondary)
+                      }
+                      .padding(28)
+                      .frame(maxWidth: .infinity, maxHeight: .infinity)
+                      .background(Color(red: 0.02, green: 0.04, blue: 0.12))
+                      .preferredColorScheme(.dark)
+                  }
+              }
+          }
+          SWIFT
+
+          cat > Widget/NightBlueWidget.swift <<'SWIFT'
+          import SwiftUI
+          import WidgetKit
+          import AppIntents
+
+          enum CounterStore {
+              static let key = "nightBlueTouchCount"
+
+              static var count: Int {
+                  UserDefaults.standard.integer(forKey: key)
+              }
+
+              static func increment() {
+                  UserDefaults.standard.set(count + 1, forKey: key)
+              }
+          }
+
+          struct IncrementCounterIntent: AppIntent {
+              static var title: LocalizedStringResource = "Sayaci Artir"
+              static var openAppWhenRun: Bool = false
+              static var authenticationPolicy: IntentAuthenticationPolicy {
+                  .alwaysAllowed
+              }
+
+              func perform() async throws -> some IntentResult {
+                  CounterStore.increment()
+                  WidgetCenter.shared.reloadTimelines(ofKind: "NightBlueTouch")
+                  return .result()
+              }
+          }
+
+          struct CounterEntry: TimelineEntry {
+              let date: Date
+              let count: Int
+          }
+
+          struct CounterProvider: TimelineProvider {
+              func placeholder(in context: Context) -> CounterEntry {
+                  CounterEntry(date: .now, count: 0)
+              }
+
+              func getSnapshot(
+                  in context: Context,
+                  completion: @escaping (CounterEntry) -> Void
+              ) {
+                  completion(CounterEntry(date: .now, count: CounterStore.count))
+              }
+
+              func getTimeline(
+                  in context: Context,
+                  completion: @escaping (Timeline<CounterEntry>) -> Void
+              ) {
+                  let entry = CounterEntry(
+                      date: .now,
+                      count: CounterStore.count
+                  )
+                  completion(Timeline(entries: [entry], policy: .never))
+              }
+          }
+
+          struct CounterWidgetView: View {
+              let entry: CounterEntry
+
+              var body: some View {
+                  VStack(spacing: 8) {
+                      Text("NIGHT BLUE")
+                          .font(.caption.bold())
+                          .foregroundStyle(.cyan)
+
+                      Text("\(entry.count)")
+                          .font(.system(size: 38, weight: .bold, design: .rounded))
+                          .minimumScaleFactor(0.5)
+                          .lineLimit(1)
+
+                      Button(intent: IncrementCounterIntent()) {
+                          Label("DOKUN", systemImage: "hand.tap.fill")
+                              .font(.headline)
+                              .frame(maxWidth: .infinity)
+                      }
+                      .buttonStyle(.borderedProminent)
+                      .tint(.blue)
+                  }
+                  .containerBackground(for: .widget) {
+                      Color(red: 0.02, green: 0.04, blue: 0.12)
+                  }
+              }
+          }
+
+          @main
+          struct NightBlueTouchWidget: Widget {
+              var body: some WidgetConfiguration {
+                  StaticConfiguration(
+                      kind: "NightBlueTouch",
+                      provider: CounterProvider()
+                  ) { entry in
+                      CounterWidgetView(entry: entry)
+                  }
+                  .configurationDisplayName("Night Blue")
+                  .description("Dokunmatik sayac denemesi.")
+                  .supportedFamilies([.systemSmall])
+              }
+          }
+          SWIFT
+
+          xcodegen generate
+
+      - name: Build unsigned iPhone application
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project NightBlueTouchTest.xcodeproj \
+            -scheme NightBlueTouchTest \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package application
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release-iphoneos/NightBlueTouchTest.app"
+          test -d "$APP"
+          test -d "$APP/PlugIns/NightBlueTouchWidget.appex"
+          mkdir -p package/Payload
+          ditto "$APP" "package/Payload/NightBlueTouchTest.app"
+          cd package
+          /usr/bin/zip -qry ../NightBlueTouchTest.ipa Payload
+
+      - name: Upload installation package
+        uses: actions/upload-artifact@v4
+        with:
+          name: NightBlueTouchTest-unsigned
+          path: NightBlueTouchTest.ipa
+          if-no-files-found: error
+          retention-days: 7
